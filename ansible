@@ -1,0 +1,78 @@
+---
+- name: Playbook to install Maven and configure AIO and SFTP settings
+  any_errors_fatal: true
+  hosts: all
+  gather_facts: false
+  become: yes
+  become_method: sudo
+
+  roles:
+    - configure_aio
+    - configure_sftp
+
+  vars:
+    maven_version: "3.6.3"
+    maven_dir: "/opt/apache-maven-{{ maven_version }}"
+    maven_bin_dir: "{{ maven_dir }}/bin"
+    symlink_dir: "/opt/maven"
+    java_home: "/etc/alternatives/java_sdk_17"  # Adjust this if necessary
+
+  tasks:
+    - name: Download Maven 3.6.3 tarball
+      ansible.builtin.get_url:
+        url: "https://archive.apache.org/dist/maven/maven-3/{{ maven_version }}/binaries/apache-maven-{{ maven_version }}-bin.tar.gz"
+        dest: "/tmp/apache-maven-{{ maven_version }}-bin.tar.gz"
+
+    - name: Extract Maven to /opt
+      ansible.builtin.unarchive:
+        src: "/tmp/apache-maven-{{ maven_version }}-bin.tar.gz"
+        dest: "/opt"
+        remote_src: yes
+        creates: "{{ maven_dir }}"  # Avoids re-extracting if already exists
+
+    - name: Create symlink for Maven
+      ansible.builtin.file:
+        src: "{{ maven_dir }}"
+        dest: "{{ symlink_dir }}"
+        state: link
+
+    - name: Create symlink for Maven binary in /usr/local/bin
+      ansible.builtin.file:
+        src: "{{ maven_bin_dir }}/mvn"
+        dest: "/usr/local/bin/mvn"
+        state: link
+
+    - name: Configure Maven environment variables in /etc/profile.d/maven.sh
+      ansible.builtin.copy:
+        dest: "/etc/profile.d/maven.sh"
+        content: |
+          export M2_HOME={{ symlink_dir }}
+          export PATH=$M2_HOME/bin:$PATH
+      mode: '0755'
+
+    - name: Source the Maven environment variables
+      ansible.builtin.shell: "source /etc/profile.d/maven.sh"
+      args:
+        executable: /bin/bash
+
+    - name: Add JAVA_HOME and PATH in /etc/environment
+      ansible.builtin.lineinfile:
+        path: "/etc/environment"
+        line: 'JAVA_HOME={{ java_home }}'
+        create: yes
+        state: present
+
+    - name: Add Maven to PATH in /etc/environment
+      ansible.builtin.lineinfile:
+        path: "/etc/environment"
+        line: 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:{{ symlink_dir }}/bin"'
+        create: yes
+        state: present
+
+    - name: Verify Maven installation
+      ansible.builtin.shell: "mvn -version"
+      register: maven_version_check
+
+    - name: Output Maven version
+      ansible.builtin.debug:
+        msg: "{{ maven_version_check.stdout }}"
